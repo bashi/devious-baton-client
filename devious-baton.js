@@ -77,9 +77,41 @@ async function readBatonMessage(reader, from) {
   return { padding, baton };
 }
 
-// TODO: Support padding.
+function encodeVarint(value) {
+  if (value <= 63) {
+    return new Uint8Array([value]);
+  } else if (value <= 16383) {
+    return new Uint8Array([
+      0x40 | (value >>> 8),
+      value & 0xff]);
+  } else if (value <= 1073741823) {
+    return new Uint8Array([
+      0x80 | (value >>> 24) & 0xff,
+      (value >>> 16) & 0xff,
+      (value >>> 8) & 0xff,
+      value & 0xff]);
+  } else {
+    return new Uint8Array([
+      0xc0 | (value >>> 56) & 0xff,
+      (value >>> 48) & 0xff,
+      (value >>> 40) & 0xff,
+      (value >>> 32) & 0xff,
+      (value >>> 24) & 0xff,
+      (value >>> 16) & 0xff,
+      (value >>> 8) & 0xff,
+      value & 0xff]);
+  }
+}
+
 async function writeBatonMessage(writer, baton, via) {
-  await writer.write(new Uint8Array([0, baton]));
+  const MAX_PADDING_LENGTH = 800;
+  const paddingLength = Math.floor(Math.random() * MAX_PADDING_LENGTH);
+  const padding = new Uint8Array(paddingLength);
+  crypto.getRandomValues(padding);
+
+  const paddingVarInt = encodeVarint(paddingLength);
+
+  await writer.write(new Uint8Array([...paddingVarInt, ...padding, baton]));
   addSendLog(baton, via);
 }
 
@@ -181,5 +213,5 @@ async function start() {
 
 document.addEventListener("DOMContentLoaded", () => {
   const button = document.getElementById("connect");
-  button.addEventListener("click", start());
+  button.addEventListener("click", () => start());
 });
