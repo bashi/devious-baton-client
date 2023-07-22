@@ -7,11 +7,15 @@ function addLog(text) {
 }
 
 function addSendLog(baton, via) {
-  addLog(`==> baton: ${baton} via ${via}`);
+  addLog(`==> baton: ${baton}, ${via}`);
 }
 
 function addRecvLog(baton, from) {
-  addLog(`<== baton: ${baton} from ${from}`);
+  addLog(`<== baton: ${baton}, ${from}`);
+}
+
+function addErrorLog(error) {
+  addLog(`Error: ${error}`);
 }
 
 class MessageReader {
@@ -80,15 +84,16 @@ async function writeBatonMessage(writer, baton, via) {
 }
 
 class App {
-  constructor(url) {
+  constructor(url, activeBatons) {
     this.wt = new WebTransport(url);
-    this.activeBatons = 1;
+    this.wt.closed.catch(e => addErrorLog(e));
+    this.activeBatons = activeBatons;
 
     this.incomingUniStreams = this.wt.incomingUnidirectionalStreams.getReader();
-    this.incomingUniStreams.read().then(({ value: stream }) => this.handleUnidirectionalStream(stream)).catch(e => console.error(e));
+    this.incomingUniStreams.read().then(({ value: stream }) => this.handleUnidirectionalStream(stream));
 
     this.incomingBidiStreams = this.wt.incomingBidirectionalStreams.getReader();
-    this.incomingBidiStreams.read().then(({ value: stream }) => this.handleBidirectionalStream(stream)).catch(e => console.error(e));
+    this.incomingBidiStreams.read().then(({ value: stream }) => this.handleBidirectionalStream(stream));
   }
 
   async handleUnidirectionalStream(stream) {
@@ -97,7 +102,7 @@ class App {
     }
 
     const reader = stream.getReader();
-    const message = await readBatonMessage(reader, "a peer initiated uni stream");
+    const message = await readBatonMessage(reader, "RemoteUni");
     reader.releaseLock();
 
     if (message.baton === 0) {
@@ -109,7 +114,7 @@ class App {
 
     if (this.activeBatons > 0) {
       await stream.cancel();
-      this.incomingUniStreams.read().then(({ value: stream }) => this.handleUnidirectionalStream(stream)).catch(e => console.error(e));
+      this.incomingUniStreams.read().then(({ value: stream }) => this.handleUnidirectionalStream(stream));
     }
   }
 
@@ -119,7 +124,7 @@ class App {
     }
 
     const reader = stream.readable.getReader();
-    const message = await readBatonMessage(reader, "a peer initiated bidi stream");
+    const message = await readBatonMessage(reader, "RemoteBidi");
     reader.releaseLock();
 
     if (message.baton === 0) {
@@ -128,12 +133,12 @@ class App {
       const nextBaton = (message.baton + 1) % 256;
 
       const writer = stream.writable.getWriter();
-      await writeBatonMessage(writer, nextBaton, "a peer initiated bidi stream");
+      await writeBatonMessage(writer, nextBaton, "RemoteBidi");
       await writer.close();
     }
 
     if (this.activeBatons > 0) {
-      this.incomingBidiStreams.read().then(({ value: stream }) => this.handleBidirectionalStream(stream)).catch(e => console.error(e));
+      this.incomingBidiStreams.read().then(({ value: stream }) => this.handleBidirectionalStream(stream));
     }
   }
 
@@ -148,11 +153,11 @@ class App {
     const stream = await this.wt.createBidirectionalStream();
     const writer = stream.writable.getWriter();
 
-    await writeBatonMessage(writer, baton, "an opened bidi stream");
+    await writeBatonMessage(writer, baton, "LocalBidi");
     await writer.close();
 
     const reader = stream.readable.getReader();
-    const message = await readBatonMessage(reader, "an opened bidi stream");
+    const message = await readBatonMessage(reader, "LocalBidi");
 
     const nextBaton = (message.baton + 1) % 256;
     this.sendBatonViaUnidirectionalStream(nextBaton);
@@ -162,19 +167,19 @@ class App {
   async sendBatonViaUnidirectionalStream(baton) {
     const stream = await this.wt.createUnidirectionalStream();
     const writer = stream.getWriter();
-    await writeBatonMessage(writer, baton, "an opened uni stream");
+    await writeBatonMessage(writer, baton, "LocalUni");
     await writer.close();
   }
 }
 
 async function start() {
   const url = document.getElementById("url").value;
-  app = new App(url);
+  // TODO: make configurable.
+  const activeBatons = 1;
+  app = new App(url, activeBatons);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   const button = document.getElementById("connect");
-  button.addEventListener('click', () => {
-    start();
-  });
+  button.addEventListener("click", start());
 });
